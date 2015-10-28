@@ -1,0 +1,87 @@
+#!/home/garyvdm/dev/cycleroutemaker/ve/bin/python
+
+
+import gpolyline
+import geographiclib.geodesic
+
+geodesic = geographiclib.geodesic.Geodesic.WGS84
+
+
+def deg_wrap_to_closest(deg, to_deg):
+    up = deg + 360
+    down = deg - 360
+    return min(deg, up, down, key=lambda x: abs(to_deg - x))
+
+
+def distance(start, end):
+    return geodesic.Inverse(start[0], start[1], end[0], end[1])['s12']
+
+
+def point_line_distance(point, start, end):
+    if (start == end):
+        return geodesic.Inverse(point[0], point[1], end[0], end[1])['s12']
+    else:
+        start_end_gd = geodesic.Inverse(start[0], start[1], end[0], end[1])
+        print(start_end_gd)
+        # bisect to find the normal gd inverse
+        start_end_line = geodesic.Line(start_end_gd['lat1'], start_end_gd['lon1'], start_end_gd['azi1'])
+
+        current_pos = 0.5
+        increment = 1
+
+        azi_delta = 0
+        
+        #while 90 - azi_delta > 0.0001:
+        #    pass
+        for pos_multiplier in range(-2, 3):
+            print(pos_multiplier)
+            print(current_pos + pos_multiplier * increment)
+        #    start_normal_gd = start_end_line.Position(start_end_gd['s12'] * 0.5)
+        #
+        #
+        #normal_point_gd = geodesic.Inverse(start_normal_gd['lat2'], start_normal_gd['lon2'], point[0], point[1])
+        #print(start_normal_gd['azi2'])
+        #print(normal_point_gd['azi1'])
+        #print(90 - abs(start_normal_gd['azi2'] - deg_wrap_to_closest(normal_point_gd['azi1'], start_normal_gd['azi2'])))
+
+        #
+        #n = abs(
+        #    (end[0] - start[0]) * (start[1] - point[1]) - (start[0] - point[0]) * (end[1] - start[1])
+        #)
+        #d = sqrt(
+        #    (end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2
+        #)
+        return n / d
+
+def rdp(points, epsilon):
+    """
+    Reduces a series of points to a simplified version that loses detail, but
+    maintains the general shape of the series.
+    """
+    dmax = 0.0
+    index = 0
+    for i in range(1, len(points) - 1):
+        d = point_line_distance(points[i], points[0], points[-1])
+        if d > dmax:
+            index = i
+            dmax = d
+    if dmax >= epsilon:
+        results = rdp(points[:index+1], epsilon)[:-1] + rdp(points[index:], epsilon)
+    else:
+        results = [points[0], points[-1]]
+    return results
+
+print(point_line_distance(
+    (1, 2),
+    (0, 0),
+    (2, 0)
+))
+
+#source_points = gpolyline.decode('zto~CycuiD@C?CBCBCF?D@DF?D?HEFd@dJb@~H@RALCRKXIPANCNCN?TXl@NZNZJXZn@zBbEp@nATZVRfIvGr@f@fIrGFDB@JJxC|BjAz@@@@@bA|@vAhANJLLDDFFR?LLn@h@rC`COTUb@GR{AjFKZERCHGTETBl@Fh@Jh@L`@fA|D\\zAD?B@BB@B?B@BA@?BCBC@C@C?CAaGlSB?@B@@?@?@?DCBC@A@E?Sj@?@CH[dAq@lBQd@}AtDBD?@?B@@A@AFEBA?A?GC}CfHaDrHeDzH{DjHsE~Jq@fBA?Un@oA`DuAbDcDpHk@pAUj@IXQh@Of@EZg@hB_E`Pi@tB[dAJN`@p@|AjDnCfGhCvFxEdKz@|AHPFNNJRv@JXLRLNRXbAlA\\`@DDJLZZTh@UJy@l@mAv@_DjBoHbEgBhA{CfBMF}BrA[R}@l@MJ_FnDcAt@eBvAmC|BuBlBiAbAgAbAWVSPe@f@{AfBORILKLu@`A_BrBKLSVmJpLi@p@EFEFa@f@}FzHeCdDcIhKKN}MpPeCnD{A|BQJcChE{@vAQVkA`CqAvCkAxC{AjEmBtFgAzCIR{@vBqCrFW^Qf@{AvBcBbCeCdDs@|@YXUT_@^kCjCoBfB{CxBe@RWRsDxBaDfBMF}GhEqDjCcBlA}NnLeAv@eMdKm@f@i@d@aAt@e@^{@r@mCvBUNQPyAhAiCtBMZyB`ByKdJmAx@EFGH}@|@_GzE[HsLtJmBzAoKvIoCzBsC~B_SbPmI~Gy]rYoLjJ}ChC_JlHuRrOIHaGbFwAlAo@r@u@dAa@x@a@jAMn@UnBQhB_AzM@Ni@tJWpEeA~MEp@I|BYxDCTCZAHGz@MfBG|@Y[YOc@a@}DsDkCsBiBiA{@e@qAs@eBy@}GoCWIWIeC_AgI{CyFwBg\\eM}FuBkAc@WIKEuNqFsGkCsDqA{D{AcIwCmAc@QBG@GBGHINYp@MXOT[^[ZuCpC]Tk@j@mEfEeBfB}EbF}@z@e@\\_@R_@Ts@Ta@Li@Lg@Ha@HmDl@aHnAuJbBmCf@yAVaB`@gA^{@^s@`@eAt@iBzAoBfBsBtAs@^k@XaBj@}DdAyBn@wAb@WFkEpAcFvA_GbBmBj@qCv@kBh@_Cp@oBl@g@J_@Ha@DQBwANaHXqFVcMl@y@F_ARyAb@cAn@cAn@aAdAKJi@z@_@p@[~@s@bCe@lGeBnRYhB]rAa@|@a@x@gAxAeAt@{AbA}Bv@uDh@_D`@sDp@k@H}Er@cEr@mEj@gBZqAPm@DiCNaA@wCAuVQuDCIB_@FSH?@A?A@A@A@A?A@A?A@A?A?A?A?A?A?A?A?AAA?AAA?AAAAAA?AAAAAAA?AAA?A?AAA?C?A?A?C?A?A@A?C?A@A@A?A@A@A@A?A@?@A@?@AB?@A@?@?@?t@gBFIf@gB|AoFnAwDv@{B^oAj@mBZ_BNkAJaALcC?oA?GaDmm@IyAAKiAeSs@}MAOEs@CkA@_@@g@Fs@@CDa@F_@R{@T{@p@wAnDmHbDuGbBeD?AAAAA?AAA?A?AAA?A?A?C?A?A?A?A@A?A?A@A?A@A@C@??A@A@?@A@A@?@?@A@?@?@?@?@?@?B@~AwCx@yAf@kAZy@HUNe@Ry@Nq@DSFg@F]z@}HbAsJZqC`@mDN{AXaCV{Bb@kEYKwHI{BCeCEwBE_@AaBKo@GqB]iB]kH{AOCQEgAW_AQkAWoAWeAUgAWqA]q@QuAa@qAa@}Bs@sCcAyDmAs@Uy@YqPqFkN{Ec@OmJoCaNwEiAi@gAk@aCgBqC{BiCgB]WmEkB}JqDuMwEyQyG_Bi@w@_@[OyA{@yBaBeBeBkCuCoEyEkAqAsAoAkAaA{A{@cBs@uPqDqKsBaBa@mUsEwAWgJkBqEcAyB_@iDu@eAWcASgZ_GkJeAeE]_@AQ@q@@CDADEDCr@JfCH~A@`@CZZnK`@`GNvCTnDFtAF~@@nAEbC?FCx@IfAK`BK`AKj@g@lBQj@q@bCu@|DcA|BoB`DsCvEy@fCeAzDg@fBU`AWhAUrA]lDi@|FAFk@nEk@tD[|A[t@k@`Ai@|@_@t@Yp@_AxDg@rBK`@Qf@Q\\e@n@sBdCsApBcAjBCDuA|Bi@~@m@fAcAhCo@`Ce@rDa@pCO`D@hFL|FK|Ae@jDy@~Dm@zEIxEN`CR~A\\xBt@dCbA~B`BfC`LhPjNxRtFpHtE`GhB|Bb@z@l@dA|A`CxArBDBjBjCnBtC`ApAV^f@f@|ApAh@d@fBnAbBjAJFnA`AdLjJbExEzBfCjAzATd@Vr@\\pApB|HPp@LRz@rCRl@B?B?@@@@B?@@@B@@BD@D@D?F?DADADCDCBv@fE@XfA|FvGnL`@x@z@jBbAnBlCfDp@v@pBnBdBzArB|A~EhDx@b@|@JzDF~@@J?T?R?`A@fEH|BDdBL\\Hf@X`BhAbCpB~D~CnB|AvBjBn@`@t@b@lCvA|Br@hCl@bFfApBh@nEdAvEnA|Bh@hDv@hFv@tBVjDj@bCZrBXn@Nx@`@`Ap@r@`@p@b@|@n@jBtAn@l@ZXx@hAd@l@|C`ErA~Al@l@z@p@hC~A|A`A~DpBdQxJXNrElCpAp@nC`BzDdB`DlAH@r@FBCBCFADAB?H@FFDF@H?HxBnAhAf@pB~AbAtAdDxG|BvEl@fAr@lA|@rA`AhAr@t@jC~BdIjF\\PZNfAb@pVjHlCr@vFbBbBb@rGdAjFz@JC@AbC`@ENyCzEaBtCk@pAc@tAY~Ac@lDKfDFdCThC\\jBxAnEhBdFz@nBxF~JnJtPhDhGxBlErEjKrDdJfF`N|G~Q~AbEh@~ATbAPpAh@lEz@pGj@jCd@vA`BtEzCdIj@|A^nAfAxElC~LzH|]XbA\\`Ah@fADJZp@b@p@zAlBlCrC~D|Dx@z@pFjFvBvBvI`JtKzKRQxAoA`JcH`FsDPQlG{EzAiAfCoBhWyRj@c@dAmANYLU|@sBTm@FOZkAF]F[P{ANuBDcC@qGBq@B[Jo@Nu@Ri@JWTc@Ta@`@i@ZY~@y@x@o@rHyGhA_A~@q@t@[rGeC`Ak@bAo@f@]zCwBnFqDLKn@c@^Wr@u@d@o@d@y@j@iANc@l@}Bn@{C`@cDf@cED{@lAqMVuAN]Pc@@KBEfAcB`AaAd@Yd@Wl@Wz@O|AUlBE`FZF?pBNtEXxHU~Im@LCdDSdD]jCw@hBeAbIcGfIcHHSfAgADE|E_ETEvAuAlBeATKzDqAzC_AhIsBxDi@hAMjBGhEAvEPxGl@NsBJsBT_C`@EjC[tBa@xCo@|HmBlImBtJaCl@OhA[^I`ASr@WbJ_Cn@QhA_@rCq@f@M`@K\\Kp@M|C[zC[~Ho@c@_Ga@uFk@kIW_D?AcAsNiAsNq@{KSeAAUK_AOgCGqA?i@@q@Ds@d@uBTu@b@aAb@i@\\c@XUp@i@x@s@RQZUlA_An@e@\\Oh@QpBu@`EuA|@]LGTOz@}@dAmAdCwCnCaDxBiCfAqAbAkAhAwAfGeH\\]lL_KvMoKNMBE|GsFhEcDjEcDvH_GbF_Eh@e@|PiMj@g@HGJMPI^W|CaCvAeAZ_@Va@Ra@Pg@Lg@RyAJuAFm@Hu@vAmNHcAP_BfAgKf@cFBQFu@NkAHo@Rq@N[T[\\[PKb@S|Bq@vC{@zUaHHE|@_@l@g@l@_AhOeYFMbM}YdEuMrAsGTcAr@{Dz@iHBsBDkBC]g@mJSaDSoDEo@KiBE{@AYA]Ee@?IIeAO}CKsAS{DI_A?o@?k@Bi@PwBX}DB[Hw@BWDWFs@Du@HaAVoAX_Af@iAl@eA~JsRBG|NiXlAaCNUZg@Xa@fQ}VlBiCrAkC`@w@FO@AZm@pDyIp@}AjEsKfCaI`C{GDQd@wApCwJ`H_TpCwIpAcEz@oCfAaD\\mARsAVwAFWXgAP{@TqA`CmMxCiPX{AHk@TyBNiC@eBCoDOkFG_C_@iNWiOAeAMwF@cAF}AT_CDYVsADUTgABMl@{A\\w@hAgCfBkCtAsBnE_Hp@}@l@aA\\k@\\c@NYbB}BjE{GhCwDpIaMZi@bJcNlAgBv@qA^m@LSxD_GxEeHpGqJ`HcKzCuErDwFfHqKbG{Ix@_BJOJOlEyGt@gAJSNU|@kAV_@PUHUlCiINKj@aBHYfAeDDIlDsKL[FSHWh@iBh@oC`@iDPiADKFYDc@P{APmAf@kD?e@l@_GFg@Da@DUHs@?i@Cm@Ie@Ga@Gk@Cg@QmEA_@MyDOiEKoDCg@QsEEu@KyCOoEKyCE}@OsEMmEOsEG_AiAmC_CkFgAcCeBaEcB{DoAoCQ_@KUYs@IQw@oBq@{Au@aBcB}De@aA_AyBeB}Dc@gA_AuBeB}DyAeDKW{AiDIQmAaBMO]c@e@k@{@gAkAyAMSEGu@_Aw@eA_@e@cBsBwAkBCCo@{@eCaDeC_DeAwAiEsFi@][Oe@MgGiBuE{A}DoAwN{E{FgBgDgAyDcAcJmCaBtG}@vFUxAqFcBsArFEHGJkD~CSLWH[LWJ}An@qGlCYPi@Zo@^m@h@ILKNSd@a@hAi@jBuAvFcAvDIVEJEHIPGFEBCBE@BrA~@fUkCPwCZAJGFG?I?CECIcGVsFf@?HAFEBCBG@l@xDNj@fA`FF?D@DF?D?HEFG@EAECAGm@R')
+#
+#simple_points = rdp(source_points, 1000)
+#
+#print(len(simple_points))
+#print(gpolyline.encode(simple_points))
+
+
