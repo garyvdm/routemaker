@@ -83,6 +83,22 @@ def get_equal_spaced_points(points, dist_between_points, start_dist):
         last_point = point
     cum_dist += dist_from_last_step
     yield (points[-1][0], points[-1][1], cum_dist)
+    
+def get_spaced_points_with_original_points(points, dist_between_points, start_dist):
+    cum_dist = start_dist
+    for point0, point1 in zip(points[:-1], points[1:]):
+        gd = geodesic.Inverse(point0[0], point0[1], point1[0], point1[1])
+        line = geodesic.Line(gd['lat1'], gd['lon1'], gd['azi1'])
+        num_points_for_sec = round(gd['s12'] / dist_between_points)
+        for i in range(num_points_for_sec):
+            dist_from_point0 = gd['s12'] / num_points_for_sec * i
+            pos = line.Position(dist_from_point0)
+            #print((cum_dist, dist_from_point0, i, gd['s12'], ))
+            yield (round(pos['lat2'], 7), round(pos['lon2'], 7), cum_dist + dist_from_point0)
+        cum_dist += gd['s12']
+    yield (points[-1][0], points[-1][1], cum_dist)
+    
+
 
 def format_dist_to_next(dist):
     if dist == 0:
@@ -202,15 +218,22 @@ try:
                 point_shifts = {}
                 part_point_shifts.append(point_shifts)
                 
-                source_part['origin_t'] = tuple((float(s) for s in source_part['origin'].split(',')))
-                source_part['destination_t'] = tuple((float(s) for s in source_part['destination'].split(',')))
+                source_part['origin_points'] = [tuple(point) for point in source_part.get('origin_meta', {}).get('points', [])]
+                if not source_part['origin_points']:
+                    source_part['origin_points']= [tuple((float(s) for s in source_part['origin'].split(',')))]
+
+
+                source_part['destination_points'] = [tuple(point) for point in source_part.get('destination_meta', {}).get('points', [])]
+                if not source_part['destination_points']:
+                    source_part['destination_points'] = [tuple((float(s) for s in source_part['destination'].split(',')))]
+
                 part_points = (
-                    [source_part['origin_t']] + 
+                    source_part['origin_points'] + 
                     list(itertools.chain(*(
                         gpolyline.decode(step['polyline']['points'])
                         for step in leg['steps']
                     ))) +
-                    [source_part['destination_t'] ]
+                    source_part['destination_points']
                 )
                 part_points = [point for point, last_point in zip(part_points, [None] + part_points[:-1]) if point != last_point]
                 # points.extend(part_points)
@@ -229,7 +252,7 @@ try:
                 
                 points.append(part_points[-1])
 
-            elevations_get_points = list(get_equal_spaced_points(points, 20, dist_cum))
+            elevations_get_points = list(get_spaced_points_with_original_points(points, 20, dist_cum))
 
             def part_steps(part_i, source_part, part):
                 leg = part['legs'][0]
@@ -242,23 +265,29 @@ try:
                     origin_meta.update({
                         'html_instructions': origin_meta['notes'],
                         'distance': {'value': 0},
-                        'points': [source_part['origin_t']],
+                        'points': source_part['origin_points'],
                         'allow_mod': False,
                     })
                     yield origin_meta
-                for step in leg['steps']:
-                    #step['points'] = [(step['start_location']['lat'], step['start_location']['lng'])] + gpolyline.decode(step['polyline']['points'])
-                    step['points'] = gpolyline.decode(step['polyline']['points'])
-                    yield step
+
                 destination_meta = source_part.get(
                     'destination_meta',
                     {'notes': 'Finish at <b>Northcliff Country Club</b>', 'icon': 'finish.png'} if part_i == len(parts) - 1 else None
                 )
+                
+                
+                for i, step in enumerate(leg['steps']):
+                    #step['points'] = [(step['start_location']['lat'], step['start_location']['lng'])] + gpolyline.decode(step['polyline']['points'])
+                    step['points'] = gpolyline.decode(step['polyline']['points'])
+                    if i + 1 == len(leg['steps']):
+                        step['points'] += source_part['destination_points'][:-1]
+                    yield step
+
                 if destination_meta:
                     destination_meta.update({
                         'html_instructions': destination_meta['notes'],
                         'distance': {'value': 0},
-                        'points': [source_part['destination_t']],
+                        'points': source_part['destination_points'][-1:],
                         'allow_mod': False,
                     })
                     yield destination_meta
@@ -333,17 +362,22 @@ try:
             logging.info('Fetching Elevation.')
             
             def get_elevation_for_points(points):
-                n = 256
+                n = 200
                 for i in range(0, len(points), n):
                     section_points = points[i:i+n]
                     polyline = gpolyline.encode_coords([(point[0], point[1]) for point in section_points])
-                    elevations = session.get(
+                    
+                    r = session.get(
                         'https://maps.googleapis.com/maps/api/elevation/json',
                         params={
                             'sensor': 'false',
                             'key': '***REMOVED***',
                             'locations':  "enc:{}".format(polyline)
-                        }).json()
+                        })
+                    try:
+                        elevations = r.json()
+                    except:
+                        logging.exception('Error getting elevation json: {}'.format(r.text))
                     if elevations['status'] != 'OK':
                         logging.error(elevations['status'])
                     else:
@@ -352,6 +386,15 @@ try:
             elevations_values = multi_cache(elevation_cache, get_elevation_for_points,
                                             ((point[0], point[1]) for point in elevations_get_points))
             elevations_points = [(point[0], point[1], point[2], value) for point, value in zip(elevations_get_points, elevations_values)]
+            
+            # elevation_dist = 0
+            # 
+            # for point0, point1 in zip(elevations_points[:-1], elevations_points[1:]):
+            #     dist_diff = point1[2] - point0[2]
+            #     elevation_diff = point1[3] - point0[3]
+            #     elevation_dist += math.sqrt(dist_diff * dist_diff + elevation_diff * elevation_diff)
+            # print((elevation_dist, elevations_points[-1][2]))
+
             
             elevation_gain = 0
             last_elevations_point = elevations_points[0]
