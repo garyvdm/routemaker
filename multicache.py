@@ -1,8 +1,5 @@
 #!/usr/bin/env python
 
-
-
-
 def multi_cache(cache, get_key, get_values, items, *args, **kargs):
 
     if get_key is None:

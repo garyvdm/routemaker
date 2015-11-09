@@ -88,12 +88,12 @@ window.onload = function() {
       waypoints: request.waypoints.map(waypoint_to_simple),
       destination: location_to_simple(request.destination)
     }
-    routeInput.value = jsyaml.safeDump(request_simple, null, "  ") + "\n"
+    routeInput.value = jsyaml.safeDump(new Array(request_simple), null, "  ") + "\n"
   });
   
   routeInput.onchange = function(){
     try{
-      var route_simple = jsyaml.safeLoad(routeInput.value);
+      var route_simple = jsyaml.safeLoad(routeInput.value)[0];
       var route = {
         origin: location_from_simple(route_simple.origin),
         destination: location_from_simple(route_simple.destination),

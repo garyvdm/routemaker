@@ -10,6 +10,10 @@ import sys
 import pprint
 import msgpack
 import signal
+import yaml
+import copy
+from pprint import pprint
+import math
 
 import requests
 import gpolyline
@@ -51,6 +55,7 @@ def multi_cache(cache, get_values, keys, *args, **kargs):
         for i, (key, exist) in enumerate(zip(keys, exists))
         if not exist)
     )
+    logging.info("Getting {} items".format(len(index_and_key_to_get)))
     values = list(values)
     if index_and_key_to_get:
         keys_to_get = [key for i, key in index_and_key_to_get]
@@ -60,9 +65,9 @@ def multi_cache(cache, get_values, keys, *args, **kargs):
             cache[key] = value
     return values
 
-def get_equal_spaced_points(points, dist_between_points):
-    cum_dist = 0
-    yield (points[0][0], points[0][1], cum_dist)
+def get_equal_spaced_points(points, dist_between_points, start_dist):
+    cum_dist = start_dist
+    yield (points[0][0], points[0][1], cum_dist )
     dist_from_last_step = 0
     last_point = points[0]
     for point in points[1:]:
@@ -95,49 +100,59 @@ parser.add_argument('--debug', action='store_true', help='Output DEBUG messages.
 args = parser.parse_args()
 
 logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
-logging.getLogger('requests').level = logging.ERROR
+logging.getLogger('requests').level = logging.DEBUG if args.debug else logging.ERROR
 
 
-elevation_cache_path = os.path.join(os.path.dirname(__file__), 'elevation_cache.pack')
 
-try:
-    with open(elevation_cache_path, 'rb') as f:
-        elevation_cache = msgpack.unpack(f, use_list=False)
-except Exception:
-    logging.exception("Could not load elevation_cache:")
-    elevation_cache = {}
+cache_names = ('elevation_cache', 'route_cache')
+caches = [(os.path.join(os.path.dirname(__file__), '{}.pack'.format(name)), name)
+          for name in cache_names]
+
+for path, name in caches:
+    try:
+        with open(path, 'rb') as f:
+            locals()[name] = msgpack.unpack(f, use_list=False, encoding='utf8')
+    except Exception:
+        logging.exception("Could not load {}:".format(name))
+        locals()[name] = {}
+        
 
 try:
     
-    with open(args.route_file, 'r') as f:
-        source = json.load(f)
+    name, ext = os.path.splitext(args.route_file)
+    if ext == '.json':
+        with open(args.route_file, 'r') as f:
+            source = json.load(f)
+    else:
+        with open(args.route_file, 'r') as f:
+            source = yaml.safe_load(f)
     
     session = requests.Session()
     
+    join_routes = source.get('join_routes', False)
     output = {
         'title': source['title'],
+        'join_routes': join_routes,
+        'notes': source.get('notes', True)
     }
     output_routes = output.setdefault('routes', [])
     
     route_file_name, _ = os.path.splitext(args.route_file)
     
-    import pprint
+    dist_cum = 0
+
     
     for source_route in source['routes']:
         try:
+            if not join_routes:
+                dist_cum = 0
+            
             logging.info('Processing "{}"'.format(source_route['title']))
             output_route = {
                 'title': source_route['title'],
                 'color': source_route['color'],
                 'side': bool(source_route.get('side', False)),
             }
-            point_meta = {}
-            def strip_and_store_notes(location, key):
-                if isinstance(location, dict):
-                    point_meta[key] = location
-                    return location['location']
-                else:
-                    return location
             
             parts = []
             last_part_destination = None
@@ -145,24 +160,27 @@ try:
             
             for part_i, part in enumerate(source_route['parts']):
                 use_prev_origin = part.get('use_prev_origin', True)
-                origin = last_part_destination if last_part_destination and use_prev_origin else strip_and_store_notes(part['origin'], (part_i, 'origin'))
-                params = {
-                    'origin': origin,
-                    'destination': strip_and_store_notes(part['destination'], (part_i, 'destination')),
+                part['origin'] = last_part_destination if last_part_destination and use_prev_origin else part['origin']
+                route_request = {
+                    'origin': part['origin'],
+                    'destination': part['destination'],
                     'waypoints': '|'.join(['via:{}'.format(wp) for wp in part['waypoints']]),
-                    'sensor': 'false',
                     'avoid': part.get('avoid', 'highways'),
-                    'key': '***REMOVED***',
                 }
                 if part.get('mode'):
-                    params['mode'] = part.get('mode')
-                last_part_destination = params['destination']
-                part_result = session.get('https://maps.googleapis.com/maps/api/directions/json', params=params).json()
-                if part_result['status'] != 'OK':
-                    print(params)
-                    raise Exception(part_result['status'])
-                parts.append(part_result['routes'][0])
-        
+                    route_request['mode'] = part.get('mode')
+                route_key = tuple(((key, value) for key, value in sorted(route_request.items())))
+                if route_key not in route_cache:
+                    route_request.update({
+                        'sensor': 'false',
+                        'key': '***REMOVED***',
+                    })
+                    last_part_destination = route_request['destination']
+                    part_result = session.get('https://maps.googleapis.com/maps/api/directions/json', params=route_request).json()
+                    if part_result['status'] != 'OK':
+                        raise Exception("{}: {}". format(part_result['status'], route_request))
+                    route_cache[route_key] = part_result['routes'][0]
+                parts.append(copy.deepcopy(route_cache[route_key]))
         
             output_route['bounds'] = {
                 'northeast': {'lat': max([part['bounds']['northeast']['lat'] for part in parts]),
@@ -171,53 +189,148 @@ try:
                               'lng': min([part['bounds']['southwest']['lng'] for part in parts]),},
             }
         
-            def part_steps(part_i, part):
+            original_points = []
+            points = []
+            
+            part_point_shifts = []
+            
+            for part_i, (source_part, part) in enumerate(zip(source_route['parts'], parts)):
                 if len(part['legs']) > 1:
                     raise Exception('More than 1 leg.')
                 leg = part['legs'][0]
-        
-                origin_meta = point_meta.get(
-                    (part_i, 'origin'),
+                
+                point_shifts = {}
+                part_point_shifts.append(point_shifts)
+                
+                source_part['origin_t'] = tuple((float(s) for s in source_part['origin'].split(',')))
+                source_part['destination_t'] = tuple((float(s) for s in source_part['destination'].split(',')))
+                part_points = (
+                    [source_part['origin_t']] + 
+                    list(itertools.chain(*(
+                        gpolyline.decode(step['polyline']['points'])
+                        for step in leg['steps']
+                    ))) +
+                    [source_part['destination_t'] ]
+                )
+                part_points = [point for point, last_point in zip(part_points, [None] + part_points[:-1]) if point != last_point]
+                # points.extend(part_points)
+                
+                points.append(part_points[0])
+                for point_a, point, point_b in zip(part_points[:-2], part_points[1:-1], part_points[2:]):
+                    gd_a = geodesic.Inverse(point[0], point[1], point_a[0], point_a[1])
+                    gd_b = geodesic.Inverse(point[0], point[1], point_b[0], point_b[1])
+                    diff = gd_b['azi1'] - gd_a['azi1']
+                    if diff < 0:
+                        diff += 360
+                    new_point = geodesic.Line(point[0], point[1], diff / 2 + gd_a['azi1']).Position(3 / math.sin(math.radians(diff/2)))
+                    new_point_t = (round(new_point['lat2'], 7), round(new_point['lon2'], 7))
+                    points.append(new_point_t)
+                    point_shifts[point] = new_point_t
+                
+                points.append(part_points[-1])
+
+            elevations_get_points = list(get_equal_spaced_points(points, 20, dist_cum))
+
+            def part_steps(part_i, source_part, part):
+                leg = part['legs'][0]
+                origin_meta = source_part.get(
+                    'origin_meta', 
                     #{'notes': 'Start at <b>Northcliff Country Club</b>'} if part_i == 0 else None
                     None
                 )
                 if origin_meta:
                     origin_meta.update({
-                        'start_location': leg['start_location'],
                         'html_instructions': origin_meta['notes'],
                         'distance': {'value': 0},
-                        'polyline': {'points': []},
+                        'points': [source_part['origin_t']],
                         'allow_mod': False,
                     })
                     yield origin_meta
                 for step in leg['steps']:
+                    #step['points'] = [(step['start_location']['lat'], step['start_location']['lng'])] + gpolyline.decode(step['polyline']['points'])
+                    step['points'] = gpolyline.decode(step['polyline']['points'])
                     yield step
-                destination_meta = point_meta.get(
-                    (part_i, 'destination'),
+                destination_meta = source_part.get(
+                    'destination_meta',
                     {'notes': 'Finish at <b>Northcliff Country Club</b>', 'icon': 'finish.png'} if part_i == len(parts) - 1 else None
                 )
                 if destination_meta:
                     destination_meta.update({
-                        'start_location': leg['end_location'],
                         'html_instructions': destination_meta['notes'],
                         'distance': {'value': 0},
-                        'polyline': {'points': []},
+                        'points': [source_part['destination_t']],
                         'allow_mod': False,
                     })
                     yield destination_meta
         
             
-            steps = list(itertools.chain(*(part_steps(part_i, part) for part_i, part in enumerate(parts))))
-            step_points = (gpolyline.decode(step['polyline']['points']) for step in steps)
-            points = list(itertools.chain(*(points if i == 0 else points[1:] for i, points in enumerate(step_points))))
+            last_output_step = None
             
-            output_route['polyline'] = gpolyline.encode_coords(points[1:])
+            
+            step_mods = {(step_mod['location'][0], step_mod['location'][1], step_mod['maneuver'], ): step_mod
+                         for step_mod in source_route.get('step_mods', ())}
+            
+            output_steps = []
+            
+            for part_i, (source_part, part, point_shifts) in enumerate(zip(source_route['parts'], parts, part_point_shifts)):
+                for step in part_steps(part_i, source_part, part):
+                    output_step = {
+                        'location': point_shifts.get(step['points'][0], step['points'][0]),
+                        'html_instructions': step['html_instructions'],
+                    }
+                    
+                    for key in ('icon', 'marker', 'class'):
+                        if key in step and step[key]:
+                            output_step[key] = step[key]
+                    output_step['maneuver'] = step.get('maneuver', '')
+                    
+                    output_step['dist_to_next_val'] = step['distance']['value']
+                    
+                    show_step = True
+                    if step['html_instructions'].startswith('Continue'):
+                        show_step = False
+                    
+                    adds = ()
+                    
+                    if step.get('allow_mod', True):
+                        step_mod = step_mods.get((output_step['location'][0], output_step['location'][1], step.get('maneuver', ''), ))
+                        if step_mod:
+                            if 'show_step' in step_mod:
+                                show_step = step_mod['show_step']
+                            
+                            if 'html_instructions' in step_mod:
+                                output_step['html_instructions'] = step_mod['html_instructions']
+                            if 'new_maneuver' in step_mod:
+                                output_step['maneuver'] = step_mod['new_maneuver']
+                            
+                            adds = step_mod.get('add', ())
+                    
+                    if show_step:
+                        output_steps.append(output_step)
+                        last_output_step = output_step
+                    else:
+                        last_output_step['dist_to_next_val'] += output_step['dist_to_next_val']
+                    
+                    for add in adds:
+                        last_output_step['dist_to_next_val'] -= add['dist_to_next_val']
+                        output_steps.append(add)
+            
+            for output_step in output_steps:
+                output_step['distance'] = '{:0.1f} km'.format(dist_cum/1000)
+                dist_cum += output_step['dist_to_next_val']
+                output_step['dist_to_next'] = format_dist_to_next(output_step['dist_to_next_val'])
+                del output_step['dist_to_next_val']
+                
+    
+            output_route['steps'] = output_steps
+            output_route['distance'] = '{:0.1f} km'.format(dist_cum/1000)
+            
+            output_route['polyline'] = gpolyline.encode_coords(points)
             
             output_route['elevation_gain'] = ''
             output_route['elevation'] = []
             
             logging.info('Fetching Elevation.')
-            elevations_get_points = list(get_equal_spaced_points(points, 20))
             
             def get_elevation_for_points(points):
                 n = 256
@@ -250,66 +363,8 @@ try:
             
             output_route['elevation'] = elevations_points[0::20]
             
-            output_steps = []
-            last_output_step = None
-            
-            
-            step_mods = {(step_mod['location'][0], step_mod['location'][1], step_mod['maneuver'], ): step_mod
-                         for step_mod in source_route.get('step_mods', ())}
-            
-            for step in steps:
-                output_step = {
-                    'location': (step['start_location']['lat'], step['start_location']['lng']),
-                    'html_instructions': step['html_instructions'],
-                }
-                
-                for key in ('icon', 'marker', 'class'):
-                    if key in step and step[key]:
-                        output_step[key] = step[key]
-                output_step['maneuver'] = step.get('maneuver', '')
-                
-                output_step['dist_to_next_val'] = step['distance']['value']
-                
-                show_step = True
-                if step['html_instructions'].startswith('Continue'):
-                    show_step = False
-                
-                adds = ()
-                
-                if step.get('allow_mod', True):
-                    step_mod = step_mods.get((step['start_location']['lat'], step['start_location']['lng'], step.get('maneuver', ''), ))
-                    if step_mod:
-                        if 'show_step' in step_mod:
-                            show_step = step_mod['show_step']
-                        
-                        if 'html_instructions' in step_mod:
-                            output_step['html_instructions'] = step_mod['html_instructions']
-                        
-                        adds = step_mod.get('add', ())
-                
-                if show_step:
-                    output_steps.append(output_step)
-                    last_output_step = output_step
-                else:
-                    last_output_step['dist_to_next_val'] += output_step['dist_to_next_val']
-                
-                for add in adds:
-                    last_output_step['dist_to_next_val'] -= add['dist_to_next_val']
-                    output_steps.append(add)
-            
-            dist_cum = 0
-            for output_step in output_steps:
-                output_step['distance'] = '{:0.1f} km'.format(dist_cum/1000)
-                dist_cum += output_step['dist_to_next_val']
-                output_step['dist_to_next'] = format_dist_to_next(output_step['dist_to_next_val'])
-                del output_step['dist_to_next_val']
-                
-    
-            output_route['steps'] = output_steps
-            output_route['distance'] = '{:0.1f} km'.format(dist_cum/1000)
             output['routes'].append(output_route)
-            
-
+    
             gpx = GPX()
             # Create first track in our GPX:
             gpx_track = GPXTrack(name=source['title'] + ' - ' + source_route['title'])
@@ -339,16 +394,18 @@ try:
                       'lng': min([route['bounds']['southwest']['lng'] for route in output_routes]),},
     }
     
-    
     with open(route_file_name + '_web.json', 'w') as f:
-        json.dump(output, f, indent=2, sort_keys=True)
+        json.dump(output, f, sort_keys=True)
 
+    with open(route_file_name + '_web.yaml', 'w') as f:
+        yaml.safe_dump(output, f)
 
 
 finally:
     with DelayedKeyboardInterrupt():
-        with open(elevation_cache_path, 'wb') as f:
-            msgpack.pack(elevation_cache, f)
+        for path, name in caches:
+            with open(path, 'wb') as f:
+                msgpack.pack(locals()[name], f)
 
 logging.info('Done.')
 
