@@ -1,0 +1,23 @@
+#!/home/garyvdm/dev/cycleroutemaker/ve/bin/python
+
+import argparse
+import json
+import yaml
+import logging
+import os.path
+
+parser = argparse.ArgumentParser()
+parser.add_argument('route_file', action='store')
+parser.add_argument('--debug', action='store_true', help='Output DEBUG messages.')
+
+args = parser.parse_args()
+
+logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+
+
+with open(args.route_file, 'r') as f:
+    source = json.load(f)
+
+name, ext = os.path.splitext(args.route_file)
+with open('{}.yaml'.format(name), 'w') as f:
+    yaml.dump(source, f)
