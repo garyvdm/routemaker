@@ -257,9 +257,6 @@ try:
                               'lng': min([part['bounds']['southwest']['lng'] for part in parts]),},
             }
 
-            step_mods = {(step_mod['location'][0], step_mod['location'][1], step_mod['maneuver'], ): step_mod
-                         for step_mod in source_route.get('step_mods', ())}
-
             steps = []
             for part_i, (source_part, part) in enumerate(zip(source_route['parts'], parts)):
                 leg = part['legs'][0]
@@ -290,7 +287,6 @@ try:
                 part_steps.append(origin_meta)
 
                 for i, step in enumerate(leg['steps']):
-                    #step['points'] = [(step['start_location']['lat'], step['start_location']['lng'])] + gpolyline.decode(step['polyline']['points'])
                     step['points'] = gpolyline.decode(step['polyline']['points'])
                     if i + 1 != len(leg['steps']):
                         del step['points'][-1]
@@ -325,6 +321,9 @@ try:
                     })
                     part_steps.append(destination_meta)
                 
+                step_mods = {(step_mod['location'][0], step_mod['location'][1], step_mod['maneuver'], ): step_mod
+                             for step_mod in source_part.get('step_mods', ())}
+
                 step_i = 0
                 while step_i < len(part_steps):
                     step = part_steps[step_i]
@@ -426,6 +425,8 @@ try:
                 dist_to_next = 0
                 for step in part_steps:
                     dist_to_next += step['x_dist_to_next']
+                    if 'location' not in step:
+                        print(step)
                     if step['show_step']:
                         output_step = {
                             'location': step['location'],
@@ -438,7 +439,7 @@ try:
                                 output_step[key] = step[key]
                         output_step['maneuver'] = step.get('maneuver', '')
                         
-                        output_step['distance'] = '{:0.3f} km'.format(step['x_cum_dist']/1000)
+                        output_step['distance'] = '{:0.1f} km'.format(step['x_cum_dist']/1000)
                         output_step['dist_to_next'] = format_dist_to_next(dist_to_next)
                         output_steps.append(output_step)
                         dist_to_next = 0
@@ -446,6 +447,8 @@ try:
             output_route['polyline'] = gpolyline.encode_coords(output_points)
             output_route['elevation'] = output_elevation[0::20]
 
+            
+            
             gpx = GPX()
             # Create first track in our GPX:
             gpx_track = GPXTrack(name=source['title'] + ' - ' + source_route['title'])
@@ -456,7 +459,7 @@ try:
             gpx_track.segments.append(gpx_segment)
             
             for point in points:
-                gpx_segment.points.append(GPXTrackPoint(point[0], point[1]))
+                gpx_segment.points.append(GPXTrackPoint(point[0][0], point[0][1]))
                 
             for step in output_steps:
                 location = step['location']
