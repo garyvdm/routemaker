@@ -18,6 +18,15 @@ logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 with open(args.route_file, 'r') as f:
     source = json.load(f)
 
+for route in source['routes']:
+    for part in route['parts']:
+        for key in ('origin', 'destination'):
+            value = part[key]
+            if isinstance(value, dict):
+                part[key] = value['location']
+                del value['location']
+                part["{}_meta".format(key)] = value
+
 name, ext = os.path.splitext(args.route_file)
 with open('{}.yaml'.format(name), 'w') as f:
-    yaml.dump(source, f)
+    yaml.dump(source, f, default_flow_style=False)
