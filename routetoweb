@@ -119,12 +119,12 @@ def get_elevation_for_points(points):
             yield from (elv['elevation'] for elv in elevations['results'])
 
 def format_dist_to_next(dist):
-    if dist == 0:
+    if round(dist/100) == 0:
         return ''
-    elif dist < 1000:
-        return '{:0} m'.format(round(dist, -1))
+    # elif dist < 1000:
+    #     return '{:0.0f} m'.format(round(dist, -1))
     else:
-        return '{:0.1f} km'.format(dist/1000)
+        return '{:0.1f}'.format(dist/1000)
 
 def pairs(items):
     return zip(items[:-1], items[1:])
