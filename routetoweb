@@ -106,7 +106,7 @@ def get_elevation_for_points(points):
             'https://maps.googleapis.com/maps/api/elevation/json',
             params={
                 'sensor': 'false',
-                'key': '***REMOVED***',
+                'key': 'AIzaSyC74vPZz2tYpRuRWY7kZ8iaQ17Xam1-_-A',
                 'locations':  "enc:{}".format(polyline)
             })
         try:
@@ -238,7 +238,7 @@ try:
                 if route_key not in route_cache:
                     route_request.update({
                         'sensor': 'false',
-                        'key': '***REMOVED***',
+                        'key': 'AIzaSyC74vPZz2tYpRuRWY7kZ8iaQ17Xam1-_-A',
                     })
                     last_part_destination = route_request['destination']
                     part_result = session.get('https://maps.googleapis.com/maps/api/directions/json', params=route_request).json()
@@ -420,32 +420,42 @@ try:
                 step1['location'] = point1
                 if is_last_part:
                     output_elevation.append(point1 + (round(dist_cum), round(elev1)))
+                steps.extend(part_steps)
+            
+            dist_to_next = 0
+            for step in reversed(steps):
+                dist_to_next += step['x_dist_to_next']
+                if step['show_step']:
+                    step['x_dist_to_next_with_hidden'] = dist_to_next
+                    dist_to_next = 0
+            
+            gain = 0
+            for point1, point2 in pairs(output_elevation):
+                if point1[3] < point2[3]:
+                    gain += point2[3] - point1[3]
+            print(gain)
+            
+            for step in steps:
+                if 'location' not in step:
+                    print(step)
+                if step['show_step']:
+                    output_step = {
+                        'location': step['location'],
+                        'original_location': step['points'][0],
+                        'html_instructions': step['html_instructions'],
+                    }
                     
-                
-                dist_to_next = 0
-                for step in part_steps:
-                    dist_to_next += step['x_dist_to_next']
-                    if 'location' not in step:
-                        print(step)
-                    if step['show_step']:
-                        output_step = {
-                            'location': step['location'],
-                            'original_location': step['points'][0],
-                            'html_instructions': step['html_instructions'],
-                        }
-                        
-                        for key in ('icon', 'marker', 'class'):
-                            if key in step and step[key]:
-                                output_step[key] = step[key]
-                        output_step['maneuver'] = step.get('maneuver', '')
-                        
-                        output_step['distance'] = '{:0.1f} km'.format(step['x_cum_dist']/1000)
-                        output_step['dist_to_next'] = format_dist_to_next(dist_to_next)
-                        output_steps.append(output_step)
-                        dist_to_next = 0
-
-            output_route['polyline'] = gpolyline.encode_coords(output_points)
-            output_route['elevation'] = output_elevation[0::20]
+                    for key in ('icon', 'marker', 'class'):
+                        if key in step and step[key]:
+                            output_step[key] = step[key]
+                    output_step['maneuver'] = step.get('maneuver', '')
+                    
+                    output_step['distance'] = '{:0.1f}'.format(step['x_cum_dist']/1000)
+                    output_step['dist_to_next'] = format_dist_to_next(step['x_dist_to_next_with_hidden'])
+                    output_steps.append(output_step)
+    
+                output_route['polyline'] = gpolyline.encode_coords(output_points)
+                output_route['elevation'] = output_elevation[0::20]
 
             
             
@@ -458,8 +468,8 @@ try:
             gpx_segment = GPXTrackSegment()
             gpx_track.segments.append(gpx_segment)
             
-            for point in points:
-                gpx_segment.points.append(GPXTrackPoint(point[0][0], point[0][1]))
+            for point in output_points:
+                gpx_segment.points.append(GPXTrackPoint(point[0], point[1]))
                 
             for step in output_steps:
                 location = step['location']
@@ -480,12 +490,26 @@ try:
                       'lng': min([route['bounds']['southwest']['lng'] for route in output_routes]),},
     }
     
+    yaml_output = copy.deepcopy(output)
+    
+    # strip debug info
+    
+    for output_route in output['routes']:
+        for output_step in output_route['steps']:
+            del output_step['original_location']
+
     with open(route_file_name + '_web.json', 'w') as f:
         json.dump(output, f, sort_keys=True)
     logging.info('Done.')
 
+    for output_route in yaml_output['routes']:
+        for output_step in output_route['steps']:
+            output_step['location'] = output_step['original_location']
+            del output_step['original_location']
+
+
     with open(route_file_name + '_web.yaml', 'w') as f:
-        yaml.safe_dump(output, f)
+        yaml.safe_dump(yaml_output, f)
 
 
 finally:
