@@ -106,7 +106,7 @@ def get_elevation_for_points(points):
             'https://maps.googleapis.com/maps/api/elevation/json',
             params={
                 'sensor': 'false',
-                'key': 'AIzaSyC74vPZz2tYpRuRWY7kZ8iaQ17Xam1-_-A',
+                'key': api_key,
                 'locations':  "enc:{}".format(polyline)
             })
         try:
@@ -160,7 +160,8 @@ args = parser.parse_args()
 logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 logging.getLogger('requests').level = logging.DEBUG if args.debug else logging.ERROR
 
-
+with open('api_key') as f:
+    api_key = f.read().strip()
 
 cache_names = ('elevation_cache', 'route_cache')
 caches = [(os.path.join(os.path.dirname(__file__), '{}.pack'.format(name)), name)
@@ -238,7 +239,7 @@ try:
                 if route_key not in route_cache:
                     route_request.update({
                         'sensor': 'false',
-                        'key': 'AIzaSyC74vPZz2tYpRuRWY7kZ8iaQ17Xam1-_-A',
+                        'key': api_key,
                     })
                     last_part_destination = route_request['destination']
                     part_result = session.get('https://maps.googleapis.com/maps/api/directions/json', params=route_request).json()
